@@ -1,18 +1,48 @@
-from flask import Blueprint, request, jsonify
+# ================================
+# products/product_routes.py
+# ================================
+
+from flask import (
+    Blueprint,
+    request,
+    jsonify
+)
 
 from firebaseSetup import db
+
+from meili import (
+    products_index
+)
+
+from middleware.admin_auth import (
+    admin_required
+)
+
+import json
 
 product_bp = Blueprint(
     "product_bp",
     __name__
 )
 
+# CLEAN FIREBASE TYPES
+def clean_data(data):
 
+    return json.loads(
+        json.dumps(
+            data,
+            default=str
+        )
+    )
+
+# ======================================
 # ADD PRODUCT
+# ======================================
 @product_bp.route(
-    '/add-product',
-    methods=['POST']
+    "/add-product",
+    methods=["POST"]
 )
+@admin_required
 def add_product():
 
     try:
@@ -22,43 +52,89 @@ def add_product():
         product = {
 
             "name":
-            data.get("name"),
+                data.get("name"),
 
             "description":
-            data.get("description"),
+                data.get("description"),
 
-            "mrp":
-            data.get("mrp"),
+            "category":
+                data.get("category"),
 
-            "market_price":
-            data.get("market_price"),
-
-            "offer_price":
-            data.get("offer_price"),
-
-            "category": data.get("category"),
-            "brand": data.get("brand"),
-            "stock": data.get("stock"),
-            "status": data.get("status"),
+            "brand":
+                data.get("brand"),
 
             "images":
-            data.get("images", [])
+                data.get("images", []),
 
+            "mrp":
+                data.get("mrp"),
+
+            "offer_price":
+                data.get("offer_price"),
+
+            "market_price":
+                data.get("market_price"),
+
+            "stock":
+                data.get("stock"),
+
+            "status":
+                data.get("status")
         }
 
+        # FIREBASE SAVE
         doc_ref = db.collection(
             "Products"
         ).add(product)
+
+        product_id = (
+            doc_ref[1].id
+        )
+
+        product["id"] = str(
+            product_id
+        )
+
+        # UPDATE ID
+        db.collection(
+            "Products"
+        ).document(
+            product_id
+        ).update({
+
+            "id":
+                str(product_id)
+        })
+
+        # CLEAN
+        product = clean_data(
+            product
+        )
+
+        # SAVE TO MEILI
+        try:
+
+            products_index.add_documents(
+                [product],
+                primary_key="id"
+            )
+
+        except Exception as meili_error:
+
+            print(
+                "MEILI ADD ERROR:",
+                str(meili_error)
+            )
 
         return jsonify({
 
             "success": True,
 
             "message":
-            "Product added successfully",
+                "Product added successfully",
 
             "id":
-            doc_ref[1].id
+                product_id
 
         }), 201
 
@@ -68,67 +144,139 @@ def add_product():
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
-# GET ALL PRODUCTS
+# ======================================
+# GET PRODUCTS
+# ======================================
 @product_bp.route(
-    '/get-products',
-    methods=['GET']
+    "/get-products",
+    methods=["GET"]
 )
 def get_products():
 
     try:
 
-        docs = db.collection(
-            "Products"
-        ).stream()
+        query = request.args.get(
+            "q",
+            ""
+        )
 
-        products = []
+        category = request.args.get(
+            "category"
+        )
 
-        for doc in docs:
+        filters = []
 
-            item = doc.to_dict()
+        if category:
 
-            item["id"] = doc.id
+            filters.append(
+                f'category = "{category}"'
+            )
 
-            products.append(item)
+        search_options = {
+
+            "limit": 1000
+        }
+
+        if filters:
+
+            search_options[
+                "filter"
+            ] = " AND ".join(
+                filters
+            )
+
+        # SEARCH
+        results = products_index.search(
+            query,
+            search_options
+        )
+
+        products = results["hits"]
 
         return jsonify({
 
             "success": True,
 
-            "count": len(products),
+            "count":
+                len(products),
 
-            "data": products
+            "data":
+                products
 
-        }), 200
+        })
 
-    except Exception as e:
+    except Exception as meili_error:
 
-        return jsonify({
+        print(
+            "MEILI SEARCH ERROR:",
+            str(meili_error)
+        )
 
-            "success": False,
+        # FIREBASE FALLBACK
+        try:
 
-            "error": str(e)
+            docs = db.collection(
+                "Products"
+            ).stream()
 
-        }), 500
+            products = []
+
+            for doc in docs:
+
+                item = doc.to_dict()
+
+                item["id"] = doc.id
+
+                products.append(
+                    item
+                )
+
+            return jsonify({
+
+                "success": True,
+
+                "count":
+                    len(products),
+
+                "data":
+                    products
+
+            })
+
+        except Exception as e:
+
+            return jsonify({
+
+                "success": False,
+
+                "error":
+                    str(e)
+
+            }), 500
 
 
+# ======================================
 # GET SINGLE PRODUCT
+# ======================================
 @product_bp.route(
-    '/get-product/<doc_id>',
-    methods=['GET']
+    "/get-product/<doc_id>",
+    methods=["GET"]
 )
-def get_single_product(doc_id):
+def get_product(doc_id):
 
     try:
 
         doc = db.collection(
             "Products"
-        ).document(doc_id).get()
+        ).document(
+            doc_id
+        ).get()
 
         if not doc.exists:
 
@@ -137,7 +285,7 @@ def get_single_product(doc_id):
                 "success": False,
 
                 "message":
-                "Product not found"
+                    "Product not found"
 
             }), 404
 
@@ -149,9 +297,10 @@ def get_single_product(doc_id):
 
             "success": True,
 
-            "data": product
+            "data":
+                product
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -159,16 +308,20 @@ def get_single_product(doc_id):
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
+# ======================================
 # UPDATE PRODUCT
+# ======================================
 @product_bp.route(
-    '/update-product/<doc_id>',
-    methods=['PUT']
+    "/update-product/<doc_id>",
+    methods=["PUT"]
 )
+@admin_required
 def update_product(doc_id):
 
     try:
@@ -177,7 +330,9 @@ def update_product(doc_id):
 
         ref = db.collection(
             "Products"
-        ).document(doc_id)
+        ).document(
+            doc_id
+        )
 
         if not ref.get().exists:
 
@@ -186,47 +341,78 @@ def update_product(doc_id):
                 "success": False,
 
                 "message":
-                "Product not found"
+                    "Product not found"
 
             }), 404
 
         updated_product = {
 
+            "id":
+                str(doc_id),
+
             "name":
-            data.get("name"),
+                data.get("name"),
 
             "description":
-            data.get("description"),
+                data.get("description"),
 
-            "mrp":
-            data.get("mrp"),
+            "category":
+                data.get("category"),
 
-            "market_price":
-            data.get("market_price"),
-
-            "offer_price":
-            data.get("offer_price"),
-
-            "category": data.get("category"),
-            "brand": data.get("brand"),
-            "stock": data.get("stock"),
-            "status": data.get("status"),
+            "brand":
+                data.get("brand"),
 
             "images":
-            data.get("images", [])
+                data.get("images", []),
 
+            "mrp":
+                data.get("mrp"),
+
+            "offer_price":
+                data.get("offer_price"),
+
+            "market_price":
+                data.get("market_price"),
+
+            "stock":
+                data.get("stock"),
+
+            "status":
+                data.get("status")
         }
 
-        ref.update(updated_product)
+        # FIREBASE
+        ref.update(
+            updated_product
+        )
+
+        # CLEAN
+        updated_product = clean_data(
+            updated_product
+        )
+
+        # MEILI UPDATE
+        try:
+
+            products_index.update_documents(
+                [updated_product]
+            )
+
+        except Exception as meili_error:
+
+            print(
+                "MEILI UPDATE ERROR:",
+                str(meili_error)
+            )
 
         return jsonify({
 
             "success": True,
 
             "message":
-            "Product updated successfully"
+                "Product updated successfully"
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -234,78 +420,29 @@ def update_product(doc_id):
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
+# ======================================
 # DELETE PRODUCT
+# ======================================
 @product_bp.route(
-    '/delete-product/<doc_id>',
-    methods=['DELETE']
+    "/delete-product/<doc_id>",
+    methods=["DELETE"]
 )
+@admin_required
 def delete_product(doc_id):
 
     try:
 
         ref = db.collection(
             "Products"
-        ).document(doc_id)
-
-        doc = ref.get()
-
-        if not doc.exists:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                "Product not found"
-
-            }), 404
-
-        product = doc.to_dict()
-
-        images = product.get(
-            "images",
-            []
+        ).document(
+            doc_id
         )
-
-        return jsonify({
-
-            "success": True,
-
-            "images": images,
-
-            "message":
-            "Delete images first"
-
-        }), 200
-
-    except Exception as e:
-
-        return jsonify({
-
-            "success": False,
-
-            "error": str(e)
-
-        }), 500
-
-
-# FINAL DELETE
-@product_bp.route(
-    '/final-delete-product/<doc_id>',
-    methods=['DELETE']
-)
-def final_delete_product(doc_id):
-
-    try:
-
-        ref = db.collection(
-            "Products"
-        ).document(doc_id)
 
         if not ref.get().exists:
 
@@ -314,20 +451,35 @@ def final_delete_product(doc_id):
                 "success": False,
 
                 "message":
-                "Product not found"
+                    "Product not found"
 
             }), 404
 
+        # FIREBASE DELETE
         ref.delete()
+
+        # DELETE FROM MEILI
+        try:
+
+            products_index.delete_document(
+                str(doc_id)
+            )
+
+        except Exception as meili_error:
+
+            print(
+                "MEILI DELETE ERROR:",
+                str(meili_error)
+            )
 
         return jsonify({
 
             "success": True,
 
             "message":
-            "Product deleted successfully"
+                "Product deleted successfully"
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -335,6 +487,7 @@ def final_delete_product(doc_id):
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500

@@ -1,18 +1,36 @@
-from flask import Blueprint, request, jsonify
+# ================================
+# category/category_routes.py
+# ================================
+
+from flask import (
+    Blueprint,
+    request,
+    jsonify
+)
 
 from firebaseSetup import db
+
+from meili import (
+    categories_index
+)
+
+from middleware.admin_auth import (
+    admin_required
+)
 
 category_bp = Blueprint(
     "category_bp",
     __name__
 )
 
-
+# ======================================
 # ADD CATEGORY
+# ======================================
 @category_bp.route(
-    '/add-category',
-    methods=['POST']
+    "/add-category",
+    methods=["POST"]
 )
+@admin_required
 def add_category():
 
     try:
@@ -21,32 +39,74 @@ def add_category():
 
         category = {
 
-    "name":
-    data.get("name"),
+            "name":
+                data.get("name"),
 
-    "slug":
-    data.get("slug"),
+            "slug":
+                data.get("slug"),
 
-    "status":
-    data.get("status"),
+            "status":
+                data.get("status"),
 
-    "image":
-    data.get("image")
-}
+            "image":
+                data.get("image"),
 
+            "position":
+                int(
+                    data.get(
+                        "position",
+                        0
+                    )
+                )
+        }
+
+        # FIREBASE
         doc_ref = db.collection(
             "Categories"
         ).add(category)
+
+        category_id = (
+            doc_ref[1].id
+        )
+
+        category["id"] = str(
+            category_id
+        )
+
+        db.collection(
+            "Categories"
+        ).document(
+            category_id
+        ).update({
+
+            "id":
+                str(category_id)
+        })
+
+        # MEILI
+        try:
+
+            categories_index.add_documents(
+                [category],
+                primary_key="id"
+            )
+
+        except Exception as meili_error:
+
+            print(
+                "MEILI CATEGORY ADD ERROR:",
+                str(meili_error)
+            )
 
         return jsonify({
 
             "success": True,
 
             "message":
-            "Category added successfully",
+                "Category added successfully",
 
             "id":
-            doc_ref[1].id
+                category_id
 
         }), 201
 
@@ -56,43 +116,84 @@ def add_category():
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
-# GET ALL CATEGORY
+# ======================================
+# GET CATEGORIES
+# ======================================
 @category_bp.route(
-    '/get-categories',
-    methods=['GET']
+    "/get-categories",
+    methods=["GET"]
 )
 def get_categories():
 
     try:
 
-        docs = db.collection(
-            "Categories"
-        ).stream()
+        try:
 
-        categories = []
+            results = categories_index.search(
+                "",
+                {
 
-        for doc in docs:
+                    "sort": [
+                        "position:asc"
+                    ],
 
-            item = doc.to_dict()
+                    "limit":
+                        1000
+                }
+            )
 
-            item["id"] = doc.id
+            categories = (
+                results["hits"]
+            )
 
-            categories.append(item)
+        except Exception as meili_error:
+
+            print(
+                "MEILI CATEGORY SEARCH ERROR:",
+                str(meili_error)
+            )
+
+            docs = db.collection(
+                "Categories"
+            ).stream()
+
+            categories = []
+
+            for doc in docs:
+
+                item = doc.to_dict()
+
+                item["id"] = doc.id
+
+                categories.append(
+                    item
+                )
+
+            categories.sort(
+                key=lambda x:
+                    x.get(
+                        "position",
+                        0
+                    )
+            )
 
         return jsonify({
 
             "success": True,
 
-            "count": len(categories),
+            "count":
+                len(categories),
 
-            "data": categories
+            "data":
+                categories
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -100,15 +201,18 @@ def get_categories():
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
+# ======================================
 # GET SINGLE CATEGORY
+# ======================================
 @category_bp.route(
-    '/get-category/<doc_id>',
-    methods=['GET']
+    "/get-category/<doc_id>",
+    methods=["GET"]
 )
 def get_single_category(doc_id):
 
@@ -116,7 +220,9 @@ def get_single_category(doc_id):
 
         doc = db.collection(
             "Categories"
-        ).document(doc_id).get()
+        ).document(
+            doc_id
+        ).get()
 
         if not doc.exists:
 
@@ -125,7 +231,7 @@ def get_single_category(doc_id):
                 "success": False,
 
                 "message":
-                "Category not found"
+                    "Category not found"
 
             }), 404
 
@@ -137,9 +243,10 @@ def get_single_category(doc_id):
 
             "success": True,
 
-            "data": category
+            "data":
+                category
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -147,16 +254,20 @@ def get_single_category(doc_id):
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
+# ======================================
 # UPDATE CATEGORY
+# ======================================
 @category_bp.route(
-    '/update-category/<doc_id>',
-    methods=['PUT']
+    "/update-category/<doc_id>",
+    methods=["PUT"]
 )
+@admin_required
 def update_category(doc_id):
 
     try:
@@ -165,7 +276,9 @@ def update_category(doc_id):
 
         ref = db.collection(
             "Categories"
-        ).document(doc_id)
+        ).document(
+            doc_id
+        )
 
         if not ref.get().exists:
 
@@ -174,35 +287,63 @@ def update_category(doc_id):
                 "success": False,
 
                 "message":
-                "Category not found"
+                    "Category not found"
 
             }), 404
 
         updated_category = {
 
-    "name":
-    data.get("name"),
+            "id":
+                str(doc_id),
 
-    "slug":
-    data.get("slug"),
+            "name":
+                data.get("name"),
 
-    "status":
-    data.get("status"),
+            "slug":
+                data.get("slug"),
 
-    "image":
-    data.get("image")
-}
+            "status":
+                data.get("status"),
 
-        ref.update(updated_category)
+            "image":
+                data.get("image"),
+
+            "position":
+                int(
+                    data.get(
+                        "position",
+                        0
+                    )
+                )
+        }
+
+        # FIREBASE
+        ref.update(
+            updated_category
+        )
+
+        # MEILI
+        try:
+
+            categories_index.update_documents(
+                [updated_category]
+            )
+
+        except Exception as meili_error:
+
+            print(
+                "MEILI CATEGORY UPDATE ERROR:",
+                str(meili_error)
+            )
 
         return jsonify({
 
             "success": True,
 
             "message":
-            "Category updated successfully"
+                "Category updated successfully"
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -210,23 +351,29 @@ def update_category(doc_id):
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
 
 
+# ======================================
 # DELETE CATEGORY
+# ======================================
 @category_bp.route(
-    '/delete-category/<doc_id>',
-    methods=['DELETE']
+    "/delete-category/<doc_id>",
+    methods=["DELETE"]
 )
+@admin_required
 def delete_category(doc_id):
 
     try:
 
         ref = db.collection(
             "Categories"
-        ).document(doc_id)
+        ).document(
+            doc_id
+        )
 
         if not ref.get().exists:
 
@@ -235,20 +382,35 @@ def delete_category(doc_id):
                 "success": False,
 
                 "message":
-                "Category not found"
+                    "Category not found"
 
             }), 404
 
+        # FIREBASE DELETE
         ref.delete()
+
+        # MEILI DELETE
+        try:
+
+            categories_index.delete_document(
+                str(doc_id)
+            )
+
+        except Exception as meili_error:
+
+            print(
+                "MEILI CATEGORY DELETE ERROR:",
+                str(meili_error)
+            )
 
         return jsonify({
 
             "success": True,
 
             "message":
-            "Category deleted successfully"
+                "Category deleted successfully"
 
-        }), 200
+        })
 
     except Exception as e:
 
@@ -256,6 +418,7 @@ def delete_category(doc_id):
 
             "success": False,
 
-            "error": str(e)
+            "error":
+                str(e)
 
         }), 500
